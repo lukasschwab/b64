@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	_ "embed"
 	"encoding/base64"
 	"flag"
@@ -9,6 +8,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"unicode"
 )
 
 //go:embed example.sh
@@ -93,14 +93,16 @@ func getRawInput() ([]byte, error) {
 }
 
 // cleanInput: base64 decoders in Go are strict, but CLI tools often produce
-// output with newlines.
+// output with whitespace.
 func cleanInput(input []byte) string {
-	cleanInput := string(bytes.TrimSpace(input))
-	cleanInput = strings.ReplaceAll(cleanInput, "\n", "")
-	cleanInput = strings.ReplaceAll(cleanInput, "\r", "")
-	cleanInput = strings.ReplaceAll(cleanInput, "\t", "")
-	cleanInput = strings.ReplaceAll(cleanInput, " ", "")
-	return cleanInput
+	var cleaned strings.Builder
+	cleaned.Grow(len(input))
+	for _, char := range string(input) {
+		if !unicode.IsSpace(char) {
+			cleaned.WriteRune(char)
+		}
+	}
+	return cleaned.String()
 }
 
 // prefixer is a purely vain part of this program: an io.Writer that writes its
