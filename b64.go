@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	_ "embed"
 	"encoding/base64"
 	"flag"
@@ -12,7 +13,7 @@ import (
 )
 
 //go:embed example.sh
-var bashExample string
+var bashExample []byte
 
 func main() {
 	// Define flags variables
@@ -28,8 +29,10 @@ func main() {
 		fmt.Fprint(w, "b64 encodes and decodes base-64 strings.\n\n")
 		flag.PrintDefaults()
 		fmt.Fprint(w, "\nExample usage:\n\n")
-		indented := withPrefix(w, []byte("  "))
-		fmt.Fprint(indented, bashExample)
+
+		indented := PrefixLines(bytes.NewReader(bashExample), []byte("  "))
+		io.Copy(w, indented)
+		w.Write([]byte{'\n'}) // Last line-prefix isn't newline-terminated.
 	}
 
 	flag.BoolVar(&decodeMode, "d", false, "Decode the input (default behavior)")
@@ -105,40 +108,48 @@ func cleanInput(input []byte) string {
 	return cleaned.String()
 }
 
-// prefixer is a purely vain part of this program: an io.Writer that writes its
-// prefix at the start of each written line, including before the first written
-// byte.
-//
-// Use the [withPrefix] constructor.
-type prefixer struct {
-	lastCharWritten byte
-	prefix          []byte
-	inner           io.Writer
+// PrefixLines from r with prefix.
+func PrefixLines(r io.Reader, prefix []byte) io.Reader {
+	return &prefixReader{
+		prefix:   prefix,
+		buffered: prefix,
+		inner:    r,
+	}
 }
 
-var _ io.Writer = (*prefixer)(nil)
+// prefixReader emits bytes read from inner, but also emits prefix at the start
+// of every line. Use the [PrefixLines] constructor. Wrapping [io.Reader] rather
+// than [io.Writer] was inspired by [prefixer].
+//
+// This is vanity: used to indent example code in the help docs.
+//
+// [prefixer]: https://github.com/goware/prefixer
+type prefixReader struct {
+	prefix   []byte
+	buffered []byte
+	inner    io.Reader
+}
 
-func (pre *prefixer) Write(p []byte) (n int, err error) {
-	for _, b := range p {
-		if pre.lastCharWritten == '\n' {
-			if _, err := pre.inner.Write(pre.prefix); err != nil {
-				return n, err
+// Read implements io.Reader.
+func (r *prefixReader) Read(p []byte) (n int, err error) {
+	inter := make([]byte, 1)
+	var c byte
+
+	for i := range p {
+		if len(r.buffered) != 0 {
+			c, r.buffered = r.buffered[0], r.buffered[1:]
+		} else {
+			if _, err = r.inner.Read(inter); err != nil {
+				return
+			}
+			c = inter[0]
+			if c == byte('\n') {
+				r.buffered = r.prefix[:]
 			}
 		}
-		d, err := pre.inner.Write([]byte{b})
-		n += d
-		pre.lastCharWritten = b
-		if err != nil {
-			return n, err
-		}
+		p[i] = c
+		n++
 	}
-	return n, nil
-}
 
-func withPrefix(inner io.Writer, prefix []byte) io.Writer {
-	return &prefixer{
-		lastCharWritten: '\n',
-		prefix:          prefix,
-		inner:           inner,
-	}
+	return
 }
